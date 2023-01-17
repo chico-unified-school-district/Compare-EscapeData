@@ -29,21 +29,23 @@ param (
 	[switch]$WhatIf
 )
 
-function Select-Sub {
+function Select-PriorSub {
  process {
   if ($_.EmploymentTypeCode -ne 'S') { return }
   if ($_.SideIndicator -ne '<=') { return }
-  Write-Host ('{0}' -f $MyInvocation.MyCommand.Name, $emp.EmpId, $emp.EmploymentTypeCode )
+  $msg = $MyInvocation.MyCommand.Name, $_.EmpId, $_.EmploymentTypeCode
+  Write-Host ('{0},[{1}],[{2}]' -f $msg )
   $_
  }
 }
 
-function Select-Regular ($todaysData) {
+function Select-NewRegular ($todaysData) {
  process {
   $id = $_.EmpId
   $emp = $todaysData.Where({ $_.EmpId -eq $id })
   if ($emp.EmploymentTypeCode -ne 'R') { return }
-  Write-Host ('{0}' -f $MyInvocation.MyCommand.Name, $emp.EmpId, $emp.EmploymentTypeCode )
+  $msg = $MyInvocation.MyCommand.Name, $emp.EmpId, $emp.EmploymentTypeCode
+  Write-Host ('{0},[{1}],[{2}]' -f $msg )
   $emp
  }
 }
@@ -65,9 +67,8 @@ function Clear-OldDataFiles {
  process {
   Write-Host ('{0}' -f $MyInvocation.MyCommand.Name)
   "Removing old .csv files..."
-  $deleteOlderThanDate = (Get-Date).AddDays(-5)
-  $oldCsvs = Get-ChildItem .\data | Where-Object { ($_.LastWriteTime -le $deleteOlderThanDate) -and
- ( ($_.name -like "*.csv") ) }
+  $cutOff = (Get-Date).AddDays(-5)
+  $oldCsvs = Get-ChildItem .\data -Filter *.csv | Where-Object { $_.LastWriteTime -le $cutOff }
   $oldCsvs | Remove-Item -Force -Confirm:$false -WhatIf:$WhatIf
  }
 }
@@ -101,7 +102,8 @@ function Get-TodaysEmpData {
 }
 
 function Import-PreviousEmpData {
- $myFile = Get-ChildItem -Path .\data -Filter *.csv | Sort-Object LastWriteTime -Descending |
+ $myFile = Get-ChildItem -Path .\data -Filter *.csv |
+ Sort-Object LastWriteTime -Descending |
  Select-Object -First 1
  Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $myFile)
  Import-Csv -Path .\data\$myFile
@@ -139,7 +141,8 @@ function Send-Notification {
 
 function Write-TodaysDataToFile ($data) {
  $exportFileName = 'emp_data_' + (Get-date -f yyyy-MM-dd) + '.csv'
- $data | Select-Object -Property EmpId, EmploymentTypeCode | Export-Csv -Path .\data\$exportFileName
+ $data | Select-Object -Property EmpId, EmploymentTypeCode |
+ Export-Csv -Path .\data\$exportFileName
 }
 
 # ==============================================================================================
@@ -158,8 +161,11 @@ Show-TestRun
 $previousData = Import-PreviousEmpData
 $todaysData = Get-TodaysEmpData
 
-Compare-EmpData $previousData $todaysData | Select-Sub |
-Select-Regular $todaysData | Send-Notification
+Compare-EmpData $previousData $todaysData | Select-PriorSub |
+Select-NewRegular $todaysData | Send-Notification
 
 if (-not$WhatIf) { Write-TodaysDataToFile $todaysData }
-# Clear-OldDataFiles
+Clear-OldDataFiles
+
+Clear-SessionData
+Show-TestRun

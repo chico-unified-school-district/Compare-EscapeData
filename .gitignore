@@ -1,0 +1,11 @@
+*.log
+*.csv
+/data/*.csv
+logs
+*.pw
+*desktop.ini
+desktop.ini
+.vscode/
+.vscode/*
+/notes.ps1
+/jenkins.ps1

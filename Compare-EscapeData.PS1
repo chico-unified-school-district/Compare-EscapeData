@@ -105,8 +105,20 @@ function Import-PreviousEmpData {
  $myFile = Get-ChildItem -Path .\data -Filter *.csv |
  Sort-Object LastWriteTime -Descending |
  Select-Object -First 1
+ if (-not$myFile) {
+  Write-Host ('{0},No Previous File' -f $MyInvocation.MyCommand.Name)
+  return
+ }
  Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $myFile)
  Import-Csv -Path .\data\$myFile
+}
+
+function New-DataDir {
+ process {
+  if (Test-Path -Path .\data) { return }
+  Write-Host ('{0}' -f $MyInvocation.MyCommand.Name)
+  New-Item -ItemType Directory -Path .\data -Confirm:$false
+ }
 }
 
 function Send-Notification {
@@ -158,13 +170,16 @@ Show-TestRun
 
 'SqlServer' | Load-Module
 
+New-DataDir
 $previousData = Import-PreviousEmpData
 $todaysData = Get-TodaysEmpData
 
-Compare-EmpData $previousData $todaysData | Select-PriorSub |
-Select-NewRegular $todaysData | Send-Notification
+if ($previousData -and $todaysData) {
+ Compare-EmpData $previousData $todaysData | Select-PriorSub |
+ Select-NewRegular $todaysData | Send-Notification
+}
 
-if (-not$WhatIf) { Write-TodaysDataToFile $todaysData }
+Write-TodaysDataToFile $todaysData
 Clear-OldDataFiles
 
 Clear-SessionData

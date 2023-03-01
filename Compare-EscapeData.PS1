@@ -126,13 +126,13 @@ function Send-Notification {
   $baseMessage = Get-Content -Path .\html\message.html -Raw
   $mailParams = @{
    From       = '<{0}>' -f $MailCredential.Username
+   To         = $To
    BodyAsHTML = $True
    SMTPServer = 'smtp.office365.com'
    Cred       = $MailCredential # use a valid Office365 account with Flow rules in place to prevent SPAM warnings.
    UseSSL     = $True
    Port       = 587
   }
-  $mailParams.To = $To
  }
  process {
   $mailParams.Subject = 'Sub to Regular - {0}' -f $_.FullName

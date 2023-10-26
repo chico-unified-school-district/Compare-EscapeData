@@ -91,6 +91,7 @@ function Get-TodaysEmpData {
   Database   = $EscapeDatabase
   Credential = $EscapeCredential
   Query      = Get-Content -Path .\sql\emp_data.sql -Raw
+  TrustServerCertificate = $true
  }
  $msg = $MyInvocation.MyCommand.Name, $EscapeServer, $EscapeDatabase, $EscapeCredential.Username
  Write-Host ('{0},[{1}\{2}],[{3}]' -f $msg) -Fore Green

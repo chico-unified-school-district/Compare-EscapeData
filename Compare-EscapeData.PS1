@@ -104,11 +104,11 @@ function Send-Notification {
 function Write-TodaysDataToFile ($data, $properties) {
  $exportFileName = 'emp_data_' + (Get-date -f yyyy-MM-dd) + '.csv'
  $data | Select-Object -Property $properties |
- Export-Csv -Path .\data\$exportFileName
+ Export-Csv -Path .\data\$exportFileName -WhatIf:$WhatIf
 }
 
-function Format-NewDataSql ($baseSql, $atributes, $dateString) {
- $baseSql -f (($atributes -join "`n    ,"), $dateString)
+function Format-NewDataSql ($baseSql, $attributes, $dateString) {
+ $baseSql -f (($attributes -join "`n    ,"), $dateString)
 }
 
 function Format-Object ($properties) {
@@ -197,11 +197,12 @@ function Format-EmailObjs ($jobLibrary) {
    }
    # Thanks, Mathias!
    # https://stackoverflow.com/questions/38241770/powershell-help-converting-hash-table-to-html
-   $tableHtml = New-Object psobject -Property $tableData |
+   $tableHtml = New-Object PSObject -Property $tableData |
    Select-Object Name, Email, Type, Attribute, 'Old Value', 'New Value' | ConvertTo-Html -Fragment
 
    $message = $baseMessage -f $htmlStyle, ($tableHtml | out-String)
-   $_.emailData.($attrib).html = $message
+   $messageWithClass = $message -replace '<table>', '<table class="emp">'
+   $_.emailData.($attrib).html = $messageWithClass
    # Send each block of email data to the Send-MailMessage function
    $_.emailData.($attrib)
   }
@@ -224,7 +225,7 @@ if (!(Test-Path -Path .\data)) { New-Item -ItemType Directory -Path .\data -Conf
 if (!(Test-Path -Path .\json)) { New-Item -ItemType Directory -Path .\json -Confirm:$false }
 
 $jobs = Get-Content -Path $JobFile | ConvertFrom-JSON
-# Write-Verbose ($jobs.jobLibrary | Out-String)
+Write-Verbose ($jobs.jobLibrary | Out-String)
 
 $trackedAttributes = $jobs.jobLibrary.attribute
 $trackedAttributes += 'EmpId'
@@ -242,12 +243,12 @@ $recentCSVData = Import-PreviousEmpData
 $days = 10
 $recentDateStr = 'AND DateTimeEdited > DATEADD(DAY,-{0},GETDATE())' -f $days
 $latestDataSql = Format-NewDataSql (Get-Content .\sql\monitored_data.sql -Raw) $trackedAttributes $recentDateStr
-# Write-Verbose ("`n", $latestDataSql, "===================================" | Out-String)
+Write-Verbose ("`n", $latestDataSql, "===================================" | Out-String)
 $latestData = Invoke-SqlCmd @dbParams -Query $latestDataSql
 # get last 5 years data
 $yearsBackDateStr = 'AND DateTimeEdited > DATEADD(YEAR,-5,GETDATE())'
 $yearsBacksql = Format-NewDataSql (Get-Content .\sql\monitored_data.sql -Raw) $trackedAttributes $yearsBackDateStr
-# Write-Verbose ("`n", $yearsBacksql | Out-String)
+Write-Verbose ("`n", $yearsBacksql | Out-String)
 $yearsBackData = Invoke-SqlCmd @dbParams -Query $yearsBacksql
 
 Write-Host ('Recent CSV count: ' + $recentCSVData.count) -F Blue

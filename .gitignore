@@ -9,3 +9,6 @@ desktop.ini
 .vscode/*
 /notes.ps1
 /jenkins.ps1
+/params.ps1
+/json/jobLibrary.json
+/data/*.csv

@@ -219,7 +219,7 @@ Show-BlockInfo Main
 Clear-SessionData
 Show-TestRun
 
-Import-Module -Name 'SqlServer' -Cmdlet 'Invoke-SqlCmd'
+Import-Module -Name 'SqlServer' -Cmdlet 'Invoke-SqlCmd' -Verbose:$false
 
 if (!(Test-Path -Path .\data)) { New-Item -ItemType Directory -Path .\data -Confirm:$false }
 if (!(Test-Path -Path .\json)) { New-Item -ItemType Directory -Path .\json -Confirm:$false }

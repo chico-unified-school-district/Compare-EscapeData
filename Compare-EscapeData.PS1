@@ -173,7 +173,7 @@ function Import-PreviousEmpData {
   Write-Host ('{0},No Previous File' -f $MyInvocation.MyCommand.Name)
   return
  }
- Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $myFile)
+ Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $myFile.VersionInfo.FileName)
  Import-Csv $myFile
 }
 

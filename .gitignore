@@ -1,8 +1,5 @@
-*.log
 *.csv
 /data/*.csv
-logs
-*.pw
 *desktop.ini
 desktop.ini
 .vscode/
@@ -14,3 +11,4 @@ desktop.ini
 /data/*.csv
 /test.html
 /json/jobLibrary.json-old
+/json/old-jobs.json

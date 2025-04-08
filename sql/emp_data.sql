@@ -1,14 +1,11 @@
 SELECT
     EmpId
-    , EmailWork
-    , EmailHome
-    , CONCAT(NameFirst,' ',NameLast) AS FullName
-    , EmploymentTypeCode
+    , TRIM(EmploymentStatusCode) AS EmploymentStatusCode
+    , TRIM(SiteId) AS SiteId
+    , TRIM(SiteDescr) AS SiteDescr
+    , TRIM (EmploymentTypeCode) AS EmploymentTypeCode
     , JobClassDescr
 FROM vwHREmploymentList
 WHERE
-    EmploymentStatusCode IN ('A','I','L','W')
-    AND
-    (EmploymentTypeCode IS NOT NULL AND EmploymentTypeCode <> '')
--- AND EmploymentTypeCode = 'S'
-ORDER BY EmpId;
+ EmailWork LIKE '%@%'
+ORDER BY EmpId

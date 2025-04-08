@@ -9,276 +9,265 @@ This Script...
 .OUTPUTS
 .NOTES
 .LINK
-# Requires -Version 5.0
+# Thanks, Mathias!
+# https://stackoverflow.com/questions/38241770/powershell-help-converting-hash-table-to-html
 #>
 [cmdletbinding()]
 param (
-    # Escape Employee Server
-    [Parameter(Mandatory = $true)]
-    [string]$EscapeServer,
-    [Parameter(Mandatory = $true)]
-    [string]$EscapeDatabase,
-    [Parameter(Mandatory = $true)]
-    [System.Management.Automation.PSCredential]$EscapeCredential,
-    [Parameter(Mandatory = $true)]
-    [System.Management.Automation.PSCredential]$MailCredential,
-    [string[]]$CC,
-    [Parameter(Mandatory = $true)]
-    [string]$JobFile,
-    # Run a 'Whatif' on commands - no data will be changed
-    [Alias('wi')]
-    [switch]$WhatIf
+ # Escape Employee Server
+ [Parameter(Mandatory = $true)]
+ [string]$EscapeServer,
+ [Parameter(Mandatory = $true)]
+ [string]$EscapeDatabase,
+ [Parameter(Mandatory = $true)]
+ [System.Management.Automation.PSCredential]$EscapeCredential,
+ [Parameter(Mandatory = $true)]
+ [System.Management.Automation.PSCredential]$MailCredential,
+ [string[]]$CC,
+ [Parameter(Mandatory = $true)]
+ [string]$JobFile,
+ # Run a 'Whatif' on commands - no data will be changed
+ [Alias('wi')]
+ [switch]$WhatIf
 )
 
-function Compare-EmpData ($previousData, $todaysData, $properties) {
-    process {
-        Write-Host ('{0}' -f $MyInvocation.MyCommand.Name)
-        $compareParams = @{
-            ReferenceObject  = $previousData
-            DifferenceObject = $todaysData
-            Property         = $properties
-        }
-        Compare-Object @compareParams
-    }
-}
 
 function Clear-OldDataFiles {
-    process {
-        Write-Host ('{0}' -f $MyInvocation.MyCommand.Name)
-        "Removing old .csv files..."
-        $cutOff = (Get-Date).AddDays(-5)
-        $oldCsvs = Get-ChildItem .\data -Filter *.csv | Where-Object { $_.LastWriteTime -le $cutOff }
-        $oldCsvs | Remove-Item -Force -Confirm:$false -WhatIf:$WhatIf
-    }
+ process {
+  Write-Host ('{0}' -f $MyInvocation.MyCommand.Name) -F DarkYellow
+  $cutOff = (Get-Date).AddDays(-5)
+  $oldCsvs = Get-ChildItem .\data -Filter *.csv | Where-Object { $_.LastWriteTime -le $cutOff }
+  $oldCsvs | Remove-Item -Force -Confirm:$false -WhatIf:$WhatIf
+ }
 }
 
-function Complete-Processing {
-    begin {
-        $i = 0
-    }
-    process {
-        # Write-Host ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.EmpId, $_.email) -Fore $infoClr
-        $i++
-        $msg = $MyInvocation.MyCommand.Name, $_.EmpId, $_.NameFull
-        Write-host ('{0},{1},{2}' -f $msg) -Fore Magenta
-    }
+function Compare-EmpData ($oldData, $todaysData) {
+ process {
+  Write-Host ('{0}' -f $MyInvocation.MyCommand.Name) -F Green
+  $properties = "EmpId", "EmploymentStatusCode", "SiteId", "EmploymentTypeCode", "JobClassDescr", "SiteDescr"
+  $compareParams = @{
+   ReferenceObject  = $oldData
+   DifferenceObject = $todaysData
+   Property         = $properties
+  }
+  Compare-Object @compareParams | Where-Object { $_.SideIndicator -eq '=>' } |
+   Select-Object -Property $properties
+ }
 }
 
-function Import-PreviousEmpData {
-    $myFile = Get-ChildItem -Path .\data -Filter *.csv |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not$myFile) {
-        Write-Host ('{0},No Previous File' -f $MyInvocation.MyCommand.Name)
-        return
-    }
-    Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $myFile)
-    Import-Csv -Path .\data\$myFile
-}
+function Complete-Processing { process { $_ } }
 
-function Send-Notification {
-    begin {
-        $mailParams = @{
-            From       = '<{0}>' -f $MailCredential.Username
-            CC         = $null
-            BodyAsHTML = $True
-            SMTPServer = 'smtp.office365.com'
-            Cred       = $MailCredential # use a valid Office365 account with Flow rules in place to prevent SPAM warnings.
-            UseSSL     = $True
-            Port       = 587
-        }
-    }
-    process {
-        $mailParams.Subject = '{0} - {1} {2}' -f $_.subject, $_.EmpId, $_.name
-        $mailParams.Body = $_.html
-        $mailParams.To = $_.to
-        if ($CC) { $mailParams.CC = $CC }
+function Format-EmailObjs ($jobLibrary) {
+ begin {
+  $css = Get-Content -Path '.\html\style.css' -Raw
+  $head = '<style TYPE="TEXT/CSS">' + $css + '</style>'
+  $message = '<p>Hello,</p><p>The following employee information has recently been updated in Escape:</p>'
+  $sig = Get-Content -Path '.\html\emailSig.html' -Raw
+ }
+ process {
 
-        Write-Verbose ($mailParams.subject | Out-String)
-        Write-Verbose ($mailParams.body | Out-String)
-        Write-Host ( $mailParams | Out-String )
+  foreach ($job in $_.jobMatches) {
+   Write-Verbose ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.EmpID, $job.name)
+   Write-Verbose ('Old Data', $_.oldData | out-string)
+   Write-Verbose  ('New Data', $_.newData | out-string)
+   $msgObj = '' | Select-Object -Property subject, to, html
+   $msgObj.subject = $job.name + ' - ' + $_.basicEmployeeData.FullName
+   $msgObj.to = $job.recipients
 
-        $msg = $MyInvocation.MyCommand.Name, $_.EmpId, $_.name, $_.subject, ($_.to -join ',')
-        Write-Host ('{0},{1},{2},{3}.{4}' -f $msg)
-        if (!$WhatIf) { Send-MailMessage @mailParams }
-    }
-}
+   $tableData = '' | Select-Object -Property Name, EmpID, Email, 'Alert Type', 'Old Value', 'New Value'
+   $tableData.Name = $_.basicEmployeeData.FullName
+   $tableData.EmpID = $_.EmpID
+   $tableData.Email = $_.basicEmployeeData.EmailWork
+   $tableData.'Alert Type' = $job.name
+   $tableData.'Old Value' = $_.oldData.($job.attribute)
+   $tableData.'New Value' = $_.newData.($job.attribute)
 
-function Write-TodaysDataToFile ($data, $properties) {
-    $exportFileName = 'emp_data_' + (Get-date -f yyyy-MM-dd) + '.csv'
-    $data | Select-Object -Property $properties |
-    Export-Csv -Path .\data\$exportFileName -WhatIf:$WhatIf
+   $convertParams = @{
+    Property    = 'Name', 'EmpID', 'Email', 'Alert Type', 'Old Value', 'New Value'
+    Head        = $head
+    PreContent  = $message
+    PostContent = $sig
+   }
+   $msgObj.html = $tableData | ConvertTo-Html @convertParams | Out-String
+   Write-Verbose ($msgObj.html | Out-String)
+   # Add each block of email data to our object
+   $_.emailData += $msgObj
+  }
+  $_
+ }
 }
 
 function Format-NewDataSql ($baseSql, $attributes, $dateString) {
-    $baseSql -f (($attributes -join "`n    ,"), $dateString)
+ $baseSql -f (($attributes -join "`n    ,"), $dateString)
 }
 
-function Format-Object ($properties) {
-    begin { $properties += 'oldData', 'newData', 'basicEmployeeData', 'emailData' }
-    process {
-        $obj = '' | Select-Object $properties
-        $obj.EmpId = $_.EmpId
-        $obj.newData = $_
-        $obj
-    }
+function Format-Object {
+ begin { $properties += 'EmpId', 'oldData', 'newData', 'basicEmployeeData', 'emailData', 'jobMatches' }
+ process {
+  $obj = '' | Select-Object $properties
+  $obj.EmpId = $_.EmpID
+  $obj.newData = $_
+  $obj.jobMatches = @()
+  $obj.emailData = @()
+  $obj
+ }
 }
 
 function Get-OriginalData ($csvData) {
-    process {
-        $empId = $_.EmpId
-        $oldData = $csvData | Where-Object { $_.EmpId -eq $empId }
-        if (!$oldData) { return } # skip if no old data. Usually means a brand new entry
-        Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $empId) -F Green
-        $_.oldData = $oldData
-        $_
-    }
+ process {
+  $empId = $_.EmpID
+  $oldData = $csvData | Where-Object { $_.EmpID -eq $empId }
+  if (!$oldData) {
+   Write-Host ('{0},{1},Skipping new entry' -f $MyInvocation.MyCommand.Name, $empId) -F DarkCyan
+   return
+  }
+  $_.oldData = $oldData
+  $_
+ }
 }
 
-function Get-ChangeTypes ($jobLibrary) {
-    process {
-        Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $_.oldData.EmpId)
-
-        foreach ($type in $jobLibrary) {
-            # if the starting and new values match then flag that attribute for later processing
-            $startVal = $type.startingValue
-            $watchVal = $type.watchValue
-            if ( ($_.oldData.($type.attribute) -eq $startVal) -or ($_.oldData.($type.attribute) -eq $watchVal)) {
-                $_.($type.attribute) = $true
-                continue
-            }
-            # if the value of this attribute changes at all flag it for later processing
-            if ( $_.oldData.($type.attribute) -ne $_.newData.($type.attribute)) {
-                $_.($type.attribute) = $true
-            }
-        }
-        $_
+function Get-JobMatches ($jobLibrary) {
+ process {
+  foreach ($job in $jobLibrary) {
+   # Skip job if site(s) do not match
+   if ($job.includedSites -and ($job.includedSites -notcontains $_.oldData.SiteId) -and ($job.includedSites -notcontains $_.newData.SiteId) ) {
+    Write-Verbose ('{0},{1},{2},No site match found - Skipping.' -f $MyInvocation.MyCommand.Name, $_.EmpID, $job.name)
+    continue
+   }
+   # Detect change of specific attribute
+   if ((!$job.oldValues) -and (!$Job.newValues)) {
+    if ($_.oldData.($job.attribute) -ne $_.newData.($job.attribute) -and ($_.newData.($job.attribute).Trim() -match '\w')) {
+     Write-Host ('{0},{1},Job MATCH: [{2}]' -f $MyInvocation.MyCommand.Name, $_.oldData.EmpId, $job.name) -F DarkCyan
+     $_.jobMatches += $job
+     continue
     }
+   }
+   # Add the current type to the jobMatches array for email processing
+   if (( $job.oldValues -contains $_.oldData.($job.attribute)) -and ($job.newValues -contains $_.newData.($job.attribute))) {
+    Write-Host ('{0},{1},Job MATCH: [{2}]' -f $MyInvocation.MyCommand.Name, $_.oldData.EmpId, $job.name) -F Cyan
+    $_.jobMatches += $job
+   }
+  }
+  # Only pass the current object to next step if any job match occurs
+  if ($_.jobMatches) { $_ }
+ }
 }
 
 function Get-BasicEmployeeData ($dbParams) {
-    begin {
-        $baseSql = Get-Content -Path .\sql\basic_emp_data.sql -Raw
-    }
-    process {
-        $sql = $baseSql -f $_.EmpId
-        Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $sql) -f Blue
-        $data = Invoke-SqlCmd @dbParams -Query $sql | ConvertTo-Csv | ConvertFrom-Csv
-        $_.basicEmployeeData = $data
-        $_
-    }
+ begin {
+  $baseSql = Get-Content -Path .\sql\basic_emp_data.sql -Raw
+ }
+ process {
+  $sqlVars = "id=$($_.EmpID)"
+  Write-Verbose ('{0},{1}' -f $MyInvocation.MyCommand.Name, $sqlVars)
+  $data = New-SqlOperation @dbParams -Query $baseSql -Parameters $sqlVars | ConvertTo-Csv | ConvertFrom-Csv
+  $_.basicEmployeeData = $data
+  $_
+ }
 }
 
-function Format-EmailObjs ($jobLibrary) {
-    begin {
-        $baseMessage = Get-Content -Path .\html\message.html -Raw
-        $htmlStyle = Get-Content -Path .\html\style.html -Raw
-    }
-    process {
-        Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, ($_.EmpId + ' ' + $type.attribute)) -F Green
-        $_.emailData = '' | Select-Object -Property $jobLibrary.attribute
-
-        foreach ($attrib in $jobLibrary.attribute) {
-
-            if ($_.($attrib) -ne $true) { continue }
-
-            $_.emailData.($attrib) = '' | Select-Object -Property name, empId, subject, to, html
-
-            $job = $jobLibrary | Where-Object { $_.attribute -eq $attrib }
-            $_.emailData.($attrib).name = $_.basicEmployeeData.FullName
-            $_.emailData.($attrib).empId = $_.EmpId
-            $_.emailData.($attrib).subject = $job.name
-            $_.emailData.($attrib).to = ($job.recipients -split ',')
-
-            $tableData = @{
-                Name        = $_.basicEmployeeData.FullName
-                Email       = $_.basicEmployeeData.EmailWork
-                Type        = $job.name
-                Attribute   = $job.attribute
-                'Old Value' = $_.oldData.($attrib)
-                'New Value' = $_.newData.($attrib)
-            }
-            # Thanks, Mathias!
-            # https://stackoverflow.com/questions/38241770/powershell-help-converting-hash-table-to-html
-            $tableHtml = New-Object PSObject -Property $tableData |
-            Select-Object Name, Email, Type, Attribute, 'Old Value', 'New Value' | ConvertTo-Html -Fragment
-
-            $message = $baseMessage -f $htmlStyle, ($tableHtml | out-String)
-            $messageWithClass = $message -replace '<table>', '<table class="emp">'
-            $_.emailData.($attrib).html = $messageWithClass
-            # Send each block of email data to the Send-MailMessage function
-            $_.emailData.($attrib)
-        }
-    }
+function Import-PreviousEmpData {
+ $myFile = Get-ChildItem -Path .\data -Filter *.csv |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1
+ if (-not$myFile) {
+  Write-Host ('{0},No Previous File' -f $MyInvocation.MyCommand.Name)
+  return
+ }
+ Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $myFile)
+ Import-Csv $myFile
 }
 
-# ==============================================================================================
-# Imported Functions
-. .\lib\Clear-SessionData.ps1
-. .\lib\Show-BlockInfo.ps1
-. .\lib\Show-TestRun.ps1
+function Send-Notification {
+ begin {
+  $mailParams = @{
+   From       = '<{0}>' -f $MailCredential.Username
+   CC         = $null
+   BodyAsHTML = $True
+   SMTPServer = 'smtp.office365.com'
+   Cred       = $MailCredential # use a valid Office365 account with Flow rules in place to prevent SPAM warnings.
+   UseSSL     = $True
+   Port       = 587
+  }
+ }
+ process {
+  foreach ($emailJob in $_.emailData) {
+   if (!$emailJob.to) {
+    $msgVars = $MyInvocation.MyCommand.Name, $_.EmpID, $emailJob.subject
+    return (Write-Host ('{0},{1},[{2}],No recipients listed in job' -f $msgVars) -f Red)
+   }
+   $mailParams.Subject = $emailJob.subject
+   $mailParams.Body = $emailJob.html
+   $mailParams.To = $emailJob.to
+   if ($CC) { $mailParams.CC = $CC }
+
+   Write-Verbose ($mailParams.subject | Out-String)
+   Write-Verbose ($mailParams.body | Out-String)
+   # Write-Host ( $mailParams | Out-String )
+   # https://www.w3schools.com/html/tryit.asp?filename=tryhtml_editor
+
+   $msg = $MyInvocation.MyCommand.Name, $_.EmpID, $mailParams.subject, ($mailParams.to -join ',')
+   Write-Host ('{0},{1},[{2}],[{3}]' -f $msg) -F DarkGreen
+   if (!$WhatIf) { Send-MailMessage @mailParams }
+  }
+ }
+}
+
+function Write-TodaysDataToFile ($data) {
+ if (@($data).count -eq 0) { EXIT }
+ $exportFileName = 'emp_data_' + (Get-date -f yyyy-MM-dd) + '.csv'
+ $data | Export-Csv -Path .\data\$exportFileName
+ # Export-Csv -Path .\data\$exportFileName -WhatIf:$WhatIf
+}
+
+Import-Module CommonScriptFunctions
+Import-Module -Name dbatools -Cmdlet Invoke-DbaQuery, Set-DbatoolsConfig
 
 Show-BlockInfo Main
 Clear-SessionData
 Show-TestRun
 
-Import-Module -Name 'SqlServer' -Cmdlet 'Invoke-SqlCmd' -Verbose:$false
-
-if (!(Test-Path -Path .\data)) { New-Item -ItemType Directory -Path .\data -Confirm:$false }
-if (!(Test-Path -Path .\json)) { New-Item -ItemType Directory -Path .\json -Confirm:$false }
+Show-BlockInfo 'Create Folders'
+New-Item -ItemType Directory -Name data -Force | Out-Null
+New-Item -ItemType Directory -Name json -Force | Out-Null
 
 $jobs = Get-Content -Path $JobFile | ConvertFrom-JSON
 Write-Verbose ($jobs.jobLibrary | Out-String)
 
-$trackedAttributes = $jobs.jobLibrary.attribute
-$trackedAttributes += 'EmpId'
-
 $dbParams = @{
-    Server                 = $EscapeServer
-    Database               = $EscapeDatabase
-    Credential             = $EscapeCredential
-    TrustServerCertificate = $true
+ Server     = $EscapeServer
+ Database   = $EscapeDatabase
+ Credential = $EscapeCredential
 }
 
-# get csv
-$recentCSVData = Import-PreviousEmpData
-# get recent changes
-$days = 10
-$recentDateStr = 'AND DateTimeEdited > DATEADD(DAY,-{0},GETDATE())' -f $days
-$latestDataSql = Format-NewDataSql (Get-Content .\sql\monitored_data.sql -Raw) $trackedAttributes $recentDateStr
-Write-Verbose ("`n", $latestDataSql, "===================================" | Out-String)
-$latestData = Invoke-SqlCmd @dbParams -Query $latestDataSql
-# get last 5 years data
-$yearsBackDateStr = 'AND DateTimeEdited > DATEADD(YEAR,-5,GETDATE())'
-$yearsBacksql = Format-NewDataSql (Get-Content .\sql\monitored_data.sql -Raw) $trackedAttributes $yearsBackDateStr
-Write-Verbose ("`n", $yearsBacksql | Out-String)
-$yearsBackData = Invoke-SqlCmd @dbParams -Query $yearsBacksql
-
-Write-Host ('Recent CSV count: ' + @($recentCSVData).count) -F Blue
-Write-Host (('Last {0} days count: ' -f $days) + @($latestData).count) -F Green
-Write-Host ('Past Years count: ' + @($yearsBackData).count) -F Magenta
+# $oldData = Import-PreviousEmpData
+# $newData = New-SqlOperation @dbParams -Query (Get-Content .\sql\emp_data.sql -Raw) | ConvertTo-Csv | ConvertFrom-Csv
 
 # =========== TEST ==============
-# $recentCSVData = Import-Csv .\data\emp_data_2024-11-04.csv
-# $latestData = Import-Csv .\data\emp_data_2024-11-05.csv
+$oldData = Import-Csv .\data\emp_data_2025-04-08.csv
+$newData = Import-Csv '.\data\emp_data_2025-04-08 copy.csv'
 # =========== TEST ==============
 
-if (!$recentCSVData) {
-    # Write file and exit. Next run time will have actual data to compare
-    Write-TodaysDataToFile $yearsBackData $trackedAttributes
-    EXIT
+if (!$oldData) {
+ "Writing previous data file and exiting. Next run time will have actual data to compare"
+ Write-TodaysDataToFile $newData
+ EXIT
 }
 
-Compare-EmpData $recentCSVData $latestData $trackedAttributes |
-Where-Object { $_.SideIndicator -eq '=>' } |
-Format-Object $trackedAttributes |
-Get-OriginalData $recentCSVData |
-Get-ChangeTypes $jobs.jobLibrary |
-Get-BasicEmployeeData $dbParams |
-Format-EmailObjs $jobs.jobLibrary |
-Send-Notification
+Write-Host ('Old Data count: ' + @($oldData).count) -F Blue
+Write-Host ('New Data count: ' + @($newData).count) -F Magenta
 
-# TODO
-Write-TodaysDataToFile $yearsBackData $trackedAttributes
+
+Compare-EmpData $oldData $newData |
+ Format-Object |
+  Get-OriginalData $oldData |
+   Get-JobMatches $jobs.jobLibrary |
+    Get-BasicEmployeeData $dbParams |
+     Format-EmailObjs $jobs.jobLibrary |
+      Send-Notification |
+       Complete-Processing
+
+#TODO
+Write-TodaysDataToFile $newData
 Clear-OldDataFiles
 
 Clear-SessionData

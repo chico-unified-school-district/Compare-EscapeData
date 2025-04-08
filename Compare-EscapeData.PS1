@@ -243,8 +243,8 @@ $dbParams = @{
 # $newData = New-SqlOperation @dbParams -Query (Get-Content .\sql\emp_data.sql -Raw) | ConvertTo-Csv | ConvertFrom-Csv
 
 # =========== TEST ==============
-$oldData = Import-Csv .\data\emp_data_2025-04-08.csv
-$newData = Import-Csv '.\data\emp_data_2025-04-08 copy.csv'
+$oldData = Import-Csv .\data\emp_data_old.csv
+$newData = Import-Csv .\data\emp_data_new.csv
 # =========== TEST ==============
 
 if (!$oldData) {
@@ -266,7 +266,6 @@ Compare-EmpData $oldData $newData |
       Send-Notification |
        Complete-Processing
 
-#TODO
 Write-TodaysDataToFile $newData
 Clear-OldDataFiles
 

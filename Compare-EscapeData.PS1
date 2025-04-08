@@ -174,7 +174,7 @@ function Import-PreviousEmpData {
   return
  }
  Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $myFile.VersionInfo.FileName)
- Import-Csv $myFile
+ Import-Csv -Path $myFile.VersionInfo.FileName
 }
 
 function Send-Notification {

@@ -173,7 +173,7 @@ function Import-PreviousEmpData {
   Write-Host ('{0},No Previous File' -f $MyInvocation.MyCommand.Name)
   return
  }
- Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $myFile.VersionInfo.FileName)
+ Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $myFile.VersionInfo.FileName) -F Green
  Import-Csv -Path $myFile.VersionInfo.FileName
 }
 
@@ -212,11 +212,13 @@ function Send-Notification {
  }
 }
 
-function Write-TodaysDataToFile ($data) {
+function Write-TodaysDataToFile ($data, $fileName) {
  if (@($data).count -eq 0) { EXIT }
- $exportFileName = 'emp_data_' + (Get-date -f yyyy-MM-dd) + '.csv'
- $data | Export-Csv -Path .\data\$exportFileName
- # Export-Csv -Path .\data\$exportFileName -WhatIf:$WhatIf
+ if (Test-Path -Path .\data\$fileName) {
+  # Prevent overwrites
+  return (Write-Host ('{0},{1}, File already exists - Skipping export' -f $MyInvocation.MyCommand.Name, $fileName) -F DarkYellow)
+ }
+ $data | Export-Csv -Path .\data\$fileName
 }
 
 Import-Module CommonScriptFunctions
@@ -230,6 +232,7 @@ Show-BlockInfo 'Create Folders'
 New-Item -ItemType Directory -Name data -Force | Out-Null
 New-Item -ItemType Directory -Name json -Force | Out-Null
 
+Show-BlockInfo 'Import Jobs'
 $jobs = Get-Content -Path $JobFile | ConvertFrom-JSON
 Write-Verbose ($jobs.jobLibrary | Out-String)
 
@@ -239,6 +242,7 @@ $dbParams = @{
  Credential = $EscapeCredential
 }
 
+Show-BlockInfo 'Get Old and New Data'
 $oldData = Import-PreviousEmpData
 $newData = New-SqlOperation @dbParams -Query (Get-Content .\sql\emp_data.sql -Raw) | ConvertTo-Csv | ConvertFrom-Csv
 
@@ -247,9 +251,11 @@ $newData = New-SqlOperation @dbParams -Query (Get-Content .\sql\emp_data.sql -Ra
 # $newData = Import-Csv .\data\emp_data_new.csv
 # =========== TEST ==============
 
+$exportFileName = 'emp_data_' + (Get-date -f yyyy-MM-dd) + '.csv'
+
 if (!$oldData) {
  "Writing previous data file and exiting. Next run time will have actual data to compare"
- Write-TodaysDataToFile $newData
+ Write-TodaysDataToFile $newData $exportFileName
  EXIT
 }
 
@@ -266,7 +272,7 @@ Compare-EmpData $oldData $newData |
       Send-Notification |
        Complete-Processing
 
-Write-TodaysDataToFile $newData
+Write-TodaysDataToFile $newData $exportFileName
 Clear-OldDataFiles
 
 Clear-SessionData

@@ -31,7 +31,6 @@ param (
   [switch]$WhatIf
 )
 
-
 function Clear-OldDataFiles {
   process {
     Write-Host ('{0}' -f $MyInvocation.MyCommand.Name) -F DarkYellow
@@ -55,7 +54,12 @@ function Compare-EmpData ($oldData, $todaysData) {
   }
 }
 
-function Complete-Processing { process { $_ } }
+function Complete-Processing {
+  process {
+    Write-Host ('{0},{1},===============' -f $MyInvocation.MyCommand.Name, $_.EmpId) -F Blue
+    Write-Verbose ($_ | Out-String)
+  }
+}
 
 function Format-EmailObjs ($jobLibrary) {
   begin {
@@ -65,31 +69,33 @@ function Format-EmailObjs ($jobLibrary) {
     $sig = Get-Content -Path '.\html\emailSig.html' -Raw
   }
   process {
-
+    $emObjProperties = 'Name', 'Email', 'Type', 'Old', 'New'
+    if ($_.leaveDate) { $emObjProperties += 'Leaving' }
     foreach ($job in $_.jobMatches) {
       Write-Verbose ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.EmpID, $job.name)
-      Write-Verbose ('Old Data', $_.oldData | out-string)
-      Write-Verbose  ('New Data', $_.newData | out-string)
+      Write-Verbose ($MyInvocation.MyCommand.Name, 'Old Data', $_.oldData | out-string)
+      Write-Verbose  ($MyInvocation.MyCommand.Name, 'New Data', $_.newData | out-string)
+
       $msgObj = '' | Select-Object -Property subject, to, html
       $msgObj.subject = $job.name + ' - ' + $_.basicEmployeeData.FullName
       $msgObj.to = $job.recipients
 
-      $tableData = '' | Select-Object -Property Name, EmpID, Email, 'Alert Type', 'Old Value', 'New Value'
-      $tableData.Name = $_.basicEmployeeData.FullName
-      $tableData.EmpID = $_.EmpID
-      $tableData.Email = $_.basicEmployeeData.EmailWork
-      $tableData.'Alert Type' = $job.name
-      $tableData.'Old Value' = $_.oldData.($job.attribute)
-      $tableData.'New Value' = $_.newData.($job.attribute)
+      $tableData = '' | Select-Object -Property $emObjProperties
+      $tableData.'Name' = $_.basicEmployeeData.FullName
+      $tableData.'Email' = $_.basicEmployeeData.EmailWork
+      $tableData.'Type' = $job.name
+      $tableData.'Old' = $_.oldData.($job.attribute)
+      $tableData.'New' = $_.newData.($job.attribute)
+      if ($_.leaveDate) { $tableData.'Leaving' = $_.leaveDate }
 
       $convertParams = @{
-        Property    = 'Name', 'EmpID', 'Email', 'Alert Type', 'Old Value', 'New Value'
+        Property    = $emObjProperties
         Head        = $head
         PreContent  = $message
         PostContent = $sig
       }
       $msgObj.html = $tableData | ConvertTo-Html @convertParams | Out-String
-      Write-Verbose ($msgObj.html | Out-String)
+      # Write-Verbose ($msgObj.html | Out-String)
       # Add each block of email data to our object
       $_.emailData += $msgObj
     }
@@ -97,12 +103,10 @@ function Format-EmailObjs ($jobLibrary) {
   }
 }
 
-function Format-NewDataSql ($baseSql, $attributes, $dateString) {
-  $baseSql -f (($attributes -join "`n    ,"), $dateString)
-}
-
 function Format-Object {
-  begin { $properties += 'EmpId', 'oldData', 'newData', 'basicEmployeeData', 'emailData', 'jobMatches' }
+  begin {
+    $properties = 'EmpId', 'oldData', 'newData', 'basicEmployeeData', 'emailData', 'jobMatches', 'leaveDate'
+  }
   process {
     $obj = '' | Select-Object $properties
     $obj.EmpId = $_.EmpID
@@ -110,59 +114,6 @@ function Format-Object {
     $obj.jobMatches = @()
     $obj.emailData = @()
     $obj
-  }
-}
-
-function Get-OriginalData ($csvData) {
-  process {
-    $empId = $_.EmpID
-    $oldData = $csvData | Where-Object { $_.EmpID -eq $empId }
-    if (!$oldData) {
-      Write-Host ('{0},{1},Skipping new entry' -f $MyInvocation.MyCommand.Name, $empId) -F DarkCyan
-      return
-    }
-    $_.oldData = $oldData
-    $_
-  }
-}
-
-function Get-JobMatches ($jobLibrary) {
-  process {
-    foreach ($job in $jobLibrary) {
-      # Skip job if site(s) do not match
-      if ($job.includedSites -and ($job.includedSites -notcontains $_.oldData.SiteId) -and ($job.includedSites -notcontains $_.newData.SiteId) ) {
-        Write-Verbose ('{0},{1},{2},No site match found - Skipping.' -f $MyInvocation.MyCommand.Name, $_.EmpID, $job.name)
-        continue
-      }
-      # Detect change of specific attribute
-      if ((!$job.oldValues) -and (!$Job.newValues)) {
-        if ($_.oldData.($job.attribute) -ne $_.newData.($job.attribute) -and ($_.newData.($job.attribute).Trim() -match '\w')) {
-          Write-Host ('{0},{1},Job MATCH: [{2}]' -f $MyInvocation.MyCommand.Name, $_.oldData.EmpId, $job.name) -F DarkCyan
-          $_.jobMatches += $job
-          continue
-        }
-      }
-      # Add the current type to the jobMatches array for email processing
-      if (( $job.oldValues -contains $_.oldData.($job.attribute)) -and ($job.newValues -contains $_.newData.($job.attribute))) {
-        Write-Host ('{0},{1},Job MATCH: [{2}]' -f $MyInvocation.MyCommand.Name, $_.oldData.EmpId, $job.name) -F Cyan
-        $_.jobMatches += $job
-      }
-    }
-    # Only pass the current object to next step if any job match occurs
-    if ($_.jobMatches) { $_ }
-  }
-}
-
-function Get-BasicEmployeeData ($dbParams) {
-  begin {
-    $baseSql = Get-Content -Path .\sql\basic_emp_data.sql -Raw
-  }
-  process {
-    $sqlVars = "id=$($_.EmpID)"
-    Write-Verbose ('{0},{1}' -f $MyInvocation.MyCommand.Name, $sqlVars)
-    $data = New-SqlOperation @dbParams -Query $baseSql -Parameters $sqlVars | ConvertTo-Csv | ConvertFrom-Csv
-    $_.basicEmployeeData = $data
-    $_
   }
 }
 
@@ -200,15 +151,90 @@ function Send-Notification {
       $mailParams.To = $emailJob.to
       if ($CC) { $mailParams.CC = $CC }
 
-      Write-Verbose ($mailParams.subject | Out-String)
-      Write-Verbose ($mailParams.body | Out-String)
-      # Write-Host ( $mailParams | Out-String )
+      Write-Verbose ($MyInvocation.MyCommand.Name, $mailParams.subject | Out-String)
+      # Write-Verbose ($MyInvocation.MyCommand.Name, $mailParams.body | Out-String)
+      Write-Verbose ( $mailParams | Out-String )
       # https://www.w3schools.com/html/tryit.asp?filename=tryhtml_editor
 
       $msg = $MyInvocation.MyCommand.Name, $_.EmpID, $mailParams.subject, ($mailParams.to -join ',')
       Write-Host ('{0},{1},[{2}],[{3}]' -f $msg) -F DarkGreen
       if (!$WhatIf) { Send-MailMessage @mailParams }
+      $_
     }
+  }
+}
+
+function Set-BasicEmployeeData ($dbParams) {
+  begin {
+    $baseSql = Get-Content -Path .\sql\basic_emp_data.sql -Raw
+  }
+  process {
+    $sqlVars = "id=$($_.EmpID)"
+    Write-Verbose ('{0},{1}' -f $MyInvocation.MyCommand.Name, $sqlVars)
+    $data = New-SqlOperation @dbParams -Query $baseSql -Parameters $sqlVars | ConvertTo-Csv | ConvertFrom-Csv
+    $_.basicEmployeeData = $data
+    $_
+  }
+}
+
+function Set-LeaveDate {
+  process {
+    if (!$_.basicEmployeeData.DateTermination -and !$_.basicEmployeeData.DateTerminationLastDay) { return $_ }
+    $myDate = if ($_.basicEmployeeData.DateTerminationLastDay -gt $_.basicEmployeeData.DateTermination ) {
+      $_.basicEmployeeData.DateTerminationLastDay
+    }
+    else {
+      $_.basicEmployeeData.DateTermination
+    }
+    $_.leaveDate = Get-Date $myDate -Format M/dd/yyyy
+    Write-Host ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.EmpId, $_.leaveDate) -F DarkGreen
+    $_
+  }
+}
+
+function Set-JobMatches ($jobLibrary) {
+  process {
+    foreach ($job in $jobLibrary) {
+      # Skip job if site(s) do not match
+      if ($job.includedSites -and ($job.includedSites -notcontains $_.oldData.SiteId) -and ($job.includedSites -notcontains $_.newData.SiteId) ) {
+        Write-Verbose ('{0},{1},{2},No site match found - Skipping.' -f $MyInvocation.MyCommand.Name, $_.EmpID, $job.name)
+        continue
+      }
+      # Detect change of specific attribute
+      if ((!$job.oldValues) -and (!$Job.newValues)) {
+
+        if ($_.oldData.($job.attribute) -notmatch '\w') {
+          Write-Host ('{0},{1},{2},Old Data empty.' -f $MyInvocation.MyCommand.Name, $_.EmpID, $job.name) -F DarkYellow
+          continue
+        }
+
+        if ($_.oldData.($job.attribute) -ne $_.newData.($job.attribute) -and ($_.newData.($job.attribute).Trim() -match '\w')) {
+          Write-Host ('{0},{1},Job MATCH: [{2}]' -f $MyInvocation.MyCommand.Name, $_.oldData.EmpId, $job.name) -F DarkCyan
+          $_.jobMatches += $job
+          continue
+        }
+      }
+      # Add the current type to the jobMatches array for email processing
+      if (( $job.oldValues -contains $_.oldData.($job.attribute)) -and ($job.newValues -contains $_.newData.($job.attribute))) {
+        Write-Host ('{0},{1},Job MATCH: [{2}]' -f $MyInvocation.MyCommand.Name, $_.oldData.EmpId, $job.name) -F Cyan
+        $_.jobMatches += $job
+      }
+    }
+    # Only pass the current object to next step if any job match occurs
+    if ($_.jobMatches) { $_ }
+  }
+}
+
+function Set-OldData ($csvData) {
+  process {
+    $empId = $_.EmpID
+    $oldData = $csvData | Where-Object { $_.EmpID -eq $empId }
+    if (!$oldData) {
+      Write-Host ('{0},{1},Skipping new entry' -f $MyInvocation.MyCommand.Name, $empId) -F DarkCyan
+      return
+    }
+    $_.oldData = $oldData
+    $_
   }
 }
 
@@ -226,7 +252,7 @@ Import-Module -Name dbatools -Cmdlet Invoke-DbaQuery, Set-DbatoolsConfig
 
 Show-BlockInfo Main
 Clear-SessionData
-Show-TestRun
+if ($WhatIf) { Show-TestRun }
 
 Show-BlockInfo 'Create Folders'
 New-Item -ItemType Directory -Name data -Force | Out-Null
@@ -262,18 +288,19 @@ if (!$oldData) {
 Write-Host ('Old Data count: ' + @($oldData).count) -F Blue
 Write-Host ('New Data count: ' + @($newData).count) -F Magenta
 
-
 Compare-EmpData $oldData $newData |
   Format-Object |
-    Get-OriginalData $oldData |
-      Get-JobMatches $jobs.jobLibrary |
-        Get-BasicEmployeeData $dbParams |
-          Format-EmailObjs $jobs.jobLibrary |
-            Send-Notification |
-              Complete-Processing
+    Set-OldData $oldData |
+      Set-JobMatches $jobs.jobLibrary |
+        Set-BasicEmployeeData $dbParams |
+          Set-LeaveDate |
+            Format-EmailObjs $jobs.jobLibrary |
+              Send-Notification |
+                Complete-Processing
 
-Write-TodaysDataToFile $newData $exportFileName
+# TODO
+# Write-TodaysDataToFile $newData $exportFileName
 Clear-OldDataFiles
 
 Clear-SessionData
-Show-TestRun
+if ($WhatIf) { Show-TestRun }

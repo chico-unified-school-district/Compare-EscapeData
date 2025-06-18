@@ -186,6 +186,7 @@ function Set-LeaveDate {
     else {
       $_.basicEmployeeData.DateTermination
     }
+    if ((Get-Date $myDate) -lt (Get-Date)) { return $_ }
     $_.leaveDate = Get-Date $myDate -Format M/dd/yyyy
     Write-Host ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.EmpId, $_.leaveDate) -F DarkGreen
     $_
